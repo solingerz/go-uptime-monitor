@@ -1,0 +1,25 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with the
+# -o option to specify a file path.
+*.out
+
+# Environment variables
+.env
+
+# Build output
+/go-uptime-monitor
+go-uptime-monitor.exe
+main
+main.exe
+
+# OS-specific files
+.DS_Store

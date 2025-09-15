@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="description" content="Real-time service status monitoring dashboard powered by Go + Redis." />
+<title>Service Status Dashboard</title>
+<style>
+  :root {
+    --bg-primary: #0d1117;
+    --bg-secondary: #161b22;
+    --bg-tertiary: #010409;
+    --border-color: #30363d;
+    --text-primary: #f0f6fc;
+    --text-secondary: #c9d1d9;
+    --text-muted: #8b949e;
+    --status-up: #238636;
+    --status-down: #da3633;
+    --status-error: #f85149;
+    --status-nodata: #30363d;
+    --bar-up: #2ea043;
+    --bar-down: #f85149;
+    --bar-nodata: #21262d;
+  }
+  
+  * {
+    box-sizing: border-box;
+  }
+  
+  body { 
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+    background: var(--bg-primary); 
+    color: var(--text-secondary); 
+    margin: 0; 
+    padding: 2rem;
+    line-height: 1.6;
+  }
+  
+  main { 
+    max-width: 1200px; 
+    margin: 0 auto; 
+  }
+  
+  header { 
+    margin-bottom: 2rem; 
+    border-bottom: 1px solid var(--border-color); 
+    padding-bottom: 1rem; 
+  }
+  
+  h1 { 
+    font-size: 2.2rem; 
+    color: var(--text-primary); 
+    margin: 0; 
+  }
+  
+  p { 
+    color: var(--text-muted); 
+  }
+  
+  #status-grid { 
+    display: grid; 
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); 
+    gap: 1.5rem;
+    animation: fadeIn 0.3s ease-in;
+  }
+  
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  
+  .card { 
+    background: var(--bg-secondary); 
+    border: 1px solid var(--border-color); 
+    border-radius: 8px; 
+    padding: 1.25rem;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  
+  .card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+  
+  .card-header { 
+    display: flex; 
+    justify-content: space-between; 
+    align-items: center; 
+    margin-bottom: 0.75rem; 
+  }
+  
+  .service-name { 
+    font-size: 1.25rem; 
+    font-weight: 600; 
+    color: var(--text-primary); 
+  }
+  
+  .status-badge { 
+    padding: 0.2rem 0.6rem; 
+    border-radius: 9999px; 
+    font-weight: 700; 
+    font-size: 0.85rem; 
+    border: 1px solid transparent;
+    animation: pulse 2s infinite;
+  }
+  
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.8; }
+  }
+  
+  .status-up { 
+    background: var(--status-up); 
+    color: #fff; 
+  }
+  
+  .status-down { 
+    background: var(--status-down); 
+    color: #fff;
+    animation: blink 1s infinite;
+  }
+  
+  .status-error {
+    background: var(--status-error);
+    color: #fff;
+    animation: blink 1s infinite;
+  }
+  
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
+  
+  .status-nodata { 
+    background: var(--status-nodata); 
+    color: #fff; 
+  }
+  
+  .details p { 
+    margin: 0.35rem 0; 
+    color: var(--text-muted); 
+  }
+  
+  .details strong { 
+    color: var(--text-secondary); 
+  }
+  
+  .timestamp { 
+    font-size: 0.8rem; 
+    color: var(--text-muted); 
+    margin-top: 0.25rem; 
+  }
+  
+  .loading, .empty, .error { 
+    text-align: center; 
+    padding: 2rem; 
+    color: var(--text-muted); 
+    grid-column: 1 / -1; 
+  }
+  
+  .error {
+    color: var(--status-error);
+    background: rgba(248, 81, 73, 0.1);
+    border: 1px solid var(--status-error);
+    border-radius: 8px;
+  }
+  
+  .timeline-container { 
+    display: flex; 
+    align-items: center; 
+    gap: 2px; 
+    background: var(--bg-tertiary); 
+    padding: 4px; 
+    border-radius: 4px; 
+    margin-top: 0.75rem;
+    position: relative;
+    overflow: hidden;
+  }
+  
+  .timeline-bar { 
+    flex: 1; 
+    height: 20px; 
+    border-radius: 2px;
+    transition: opacity 0.2s ease;
+    cursor: pointer;
+  }
+  
+  .timeline-bar:hover {
+    opacity: 0.8;
+  }
+  
+  .bar-up { 
+    background: var(--bar-up); 
+  }
+  
+  .bar-down { 
+    background: var(--bar-down); 
+  }
+  
+  .bar-error {
+    background: var(--status-error);
+  }
+  
+  .bar-nodata { 
+    background: var(--bar-nodata); 
+    opacity: 0.8; 
+  }
+  
+  .timeline-labels { 
+    display: flex; 
+    justify-content: space-between; 
+    font-size: 0.75rem; 
+    color: var(--text-muted); 
+    padding: 0 4px; 
+    margin-top: 4px; 
+  }
+  
+  .toolbar { 
+    display: flex; 
+    gap: 8px; 
+    align-items: center; 
+    margin: 0.75rem 0 1.25rem;
+    flex-wrap: wrap;
+  }
+  
+  select, button { 
+    background: var(--bg-secondary); 
+    color: var(--text-secondary); 
+    border: 1px solid var(--border-color); 
+    border-radius: 6px; 
+    padding: 6px 10px;
+    transition: all 0.2s ease;
+  }
+  
+  button { 
+    cursor: pointer; 
+  }
+  
+  button:hover, select:hover {
+    border-color: var(--text-muted);
+    background: var(--border-color);
+  }
+  
+  button:active {
+    transform: scale(0.98);
+  }
+  
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  
+  .stats-bar {
+    display: flex;
+    gap: 2rem;
+    margin: 1rem 0;
+    padding: 1rem;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+  }
+  
+  .stat-item {
+    display: flex;
+    flex-direction: column;
+  }
+  
+  .stat-label {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+  
+  .stat-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  
+  .spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid var(--border-color);
+    border-top-color: var(--text-primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+  
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  
+  @media (max-width: 768px) {
+    body { padding: 1rem; }
+    h1 { font-size: 1.8rem; }
+    #status-grid { grid-template-columns: 1fr; }
+    .stats-bar { flex-direction: column; gap: 1rem; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Service Status Dashboard</h1>
+    <p>A high-performance monitoring system powered by Go + Redis</p>
+    <div class="toolbar">
+      <label>Time Window:
+        <select id="window">
+          <option value="1h" selected>Last 1 Hour</option>
+          <option value="6h">Last 6 Hours</option>
+          <option value="24h">Last 24 Hours</option>
+          <option value="7d">Last 7 Days</option>
+          <option value="30d">Last 30 Days</option>
+        </select>
+      </label>
+      <button id="refresh">
+        <span id="refresh-text">Refresh</span>
+      </button>
+      <button id="toggle-auto">
+        <span id="auto-text">Auto-refresh: ON</span>
+      </button>
+    </div>
+  </header>
+  <div id="stats-bar" class="stats-bar" style="display:none;">
+    <div class="stat-item">
+      <span class="stat-label">Total Services</span>
+      <span class="stat-value" id="total-services">0</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Online Services</span>
+      <span class="stat-value" id="online-services">0</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Average Response</span>
+      <span class="stat-value" id="avg-response">0ms</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Last Updated</span>
+      <span class="stat-value" id="last-update">--:--</span>
+    </div>
+  </div>
+  <div id="status-grid">
+    <div class="loading">
+      <div class="spinner"></div>
+      <p>Loading status...</p>
+    </div>
+  </div>
+</main>
+<script>
+  const debounce = (func, wait) => {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
+  };
+
+  const elements = {
+    grid: document.getElementById('status-grid'),
+    windowSel: document.getElementById('window'),
+    refreshBtn: document.getElementById('refresh'),
+    autoBtn: document.getElementById('toggle-auto'),
+    statsBar: document.getElementById('stats-bar'),
+    totalServices: document.getElementById('total-services'),
+    onlineServices: document.getElementById('online-services'),
+    avgResponse: document.getElementById('avg-response'),
+    lastUpdate: document.getElementById('last-update'),
+    refreshText: document.getElementById('refresh-text'),
+    autoText: document.getElementById('auto-text')
+  };
+
+  let state = {
+    services: [],
+    data: {},
+    autoRefresh: true,
+    refreshInterval: null,
+    lastFetchTime: null,
+    cache: new Map(),
+    cacheTimeout: 30000
+  };
+
+  const streamIdToDate = (id) => new Date(parseInt(id.split('-')[0], 10));
+  
+  const transformStreamData = (messages) => {
+    if (!messages || !Array.isArray(messages)) return [];
+    
+    return messages.map(msg => {
+      const values = msg.Values || {};
+      return {
+        status: values.status || 'UNKNOWN',
+        status_code: parseInt(values.status_code || 0, 10),
+        response_time_ms: parseInt(values.response_time_ms || 0, 10),
+        created_at: streamIdToDate(msg.ID).toISOString()
+      };
+    });
+  };
+
+  const transformAggData = (aggData) => {
+    if (!aggData || typeof aggData !== 'object') return [];
+    
+    const history = [];
+    for (const date in aggData) {
+      const stats = aggData[date];
+      if (stats && typeof stats === 'object') {
+        history.push({
+          status: parseInt(stats.down_count || 0, 10) > 0 ? 'DOWN' : 'UP',
+          status_code: null,
+          response_time_ms: parseInt(stats.avg_response_time_ms || 0, 10),
+          created_at: new Date(date).toISOString(),
+          isAggregated: true
+        });
+      }
+    }
+    return history.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  };
+
+  function buildTimelineBars(history, windowValue, barCount = 48) {
+      if (!history || history.length === 0) {
+          return Array(barCount).fill('<div class="timeline-bar bar-nodata" title="No data"></div>').join('');
+      }
+
+      const isDaily = windowValue.endsWith('d');
+      if (isDaily) {
+        let bars = '';
+        const days = parseInt(windowValue.slice(0, -1), 10);
+        const today = new Date();
+        today.setUTCHours(0, 0, 0, 0);
+
+        for (let i = days - 1; i >= 0; i--) {
+            const day = new Date(today);
+            day.setUTCDate(today.getUTCDate() - i);
+            const dayStr = day.toISOString().split('T')[0];
+            const record = history.find(h => h.created_at.startsWith(dayStr));
+
+            if (record) {
+                const cls = record.status === 'DOWN' ? 'bar-down' : 'bar-up';
+                const title = `${dayStr} | ${record.status} | Avg Response: ${record.response_time_ms}ms`;
+                bars += `<div class="timeline-bar ${cls}" title="${title}"></div>`;
+            } else {
+                bars += `<div class="timeline-bar bar-nodata" title="${dayStr} | No data"></div>`;
+            }
+        }
+        return bars;
+      }
+
+      const hours = parseInt(windowValue.slice(0, -1), 10);
+      const windowMillis = hours * 60 * 60 * 1000;
+      const latestTimestamp = history.length > 0 ? new Date(history[history.length - 1].created_at).getTime() : Date.now();
+      const startTs = latestTimestamp - windowMillis;
+      const slotDuration = windowMillis / barCount;
+      
+      const hs = history.map(h => ({...h, ts: new Date(h.created_at).getTime()})).sort((a, b) => a.ts - b.ts);
+      
+      const bars = [];
+      let eventPtr = 0;
+
+      let lastStatus = 'nodata';
+      const lastEventBeforeWindow = hs.filter(h => h.ts < startTs).pop();
+      if (lastEventBeforeWindow) {
+          lastStatus = lastEventBeforeWindow.status.toLowerCase();
+      }
+
+      for (let i = 0; i < barCount; i++) {
+        const slotStart = startTs + i * slotDuration;
+        const slotEnd = slotStart + slotDuration;
+        
+        let eventsInSlot = [];
+        while (eventPtr < hs.length && hs[eventPtr].ts < slotEnd) {
+            if (hs[eventPtr].ts >= slotStart) {
+                eventsInSlot.push(hs[eventPtr]);
+            }
+            eventPtr++;
+        }
+        
+        if (eventsInSlot.length > 0) {
+            const isDown = eventsInSlot.some(e => e.status === 'DOWN');
+            const currentStatus = isDown ? 'down' : 'up';
+            const lastEvent = eventsInSlot[eventsInSlot.length - 1];
+            const cls = `bar-${currentStatus}`;
+            const title = `${new Date(lastEvent.ts).toLocaleString()} | ${lastEvent.status}`;
+            bars.push(`<div class="timeline-bar ${cls}" title="${title}"></div>`);
+            lastStatus = currentStatus;
+        } else {
+            const title = lastStatus !== 'nodata' ? `Continuing status: ${lastStatus.toUpperCase()}` : 'No data';
+            bars.push(`<div class="timeline-bar bar-${lastStatus}" title="${title}"></div>`);
+        }
+      }
+      return bars.join('');
+  }
+
+  function render(data) {
+    const fragment = document.createDocumentFragment();
+    const windowValue = elements.windowSel.value || '1h';
+    
+    updateStats(data);
+    
+    if (state.services.length === 0) {
+      elements.grid.innerHTML = '<div class="empty">No services configured.</div>';
+      return;
+    }
+
+    state.services.forEach(service => {
+      const name = service.Name;
+      const rawHistory = data[name] || [];
+      const isDaily = windowValue.endsWith('d');
+      const history = isDaily ? transformAggData(rawHistory) : transformStreamData(rawHistory);
+
+      const card = document.createElement('div');
+      card.className = 'card';
+      const latest = history.length ? history[history.length - 1] : null;
+      let headerHTML = '';
+
+      if (latest) {
+        const statusClass = latest.status === 'UP' ? 'status-up' : 'status-down';
+        const statusText = latest.status === 'UP' ? 'UP' : 'DOWN';
+        const respTime = latest.response_time_ms;
+        const httpCode = latest.status_code;
+        const lastChecked = new Date(latest.created_at).toLocaleString();
+        const timeLabel = isDaily ? 'Date' : 'Last Checked';
+        const timeValue = isDaily ? new Date(latest.created_at).toLocaleDateString() : lastChecked;
+
+        headerHTML = `
+          <div class="card-header">
+            <span class="service-name">${name}</span>
+            <span class="status-badge ${statusClass}">${statusText}</span>
+          </div>
+          <div class="details">
+            <p><strong>Response Time:</strong> ${respTime} ms</p>
+            <p><strong>HTTP Status Code:</strong> ${httpCode || 'N/A'}</p>
+            <div class="timestamp">${timeLabel}: ${timeValue}</div>
+          </div>`;
+      } else {
+        headerHTML = `
+          <div class="card-header">
+            <span class="service-name">${name}</span>
+            <span class="status-badge status-nodata">No Data</span>
+          </div>
+          <div class="details">
+            <p><strong>Response Time:</strong> N/A</p>
+            <p><strong>HTTP Status Code:</strong> N/A</p>
+            <div class="timestamp">No data received yet</div>
+          </div>`;
+      }
+
+      const barsHTML = buildTimelineBars(history, windowValue);
+      const timeline = `
+        <div class="timeline-container">${barsHTML}</div>
+        <div class="timeline-labels"><span>Past</span><span>Now</span></div>`;
+      card.innerHTML = headerHTML + timeline;
+      fragment.appendChild(card);
+    });
+    
+    elements.grid.innerHTML = '';
+    elements.grid.appendChild(fragment);
+  }
+
+  function updateStats(data) {
+    if (!data || Object.keys(data).length === 0) return;
+
+    let totalCount = 0;
+    let onlineCount = 0;
+    let totalResponseTime = 0;
+    let responseCount = 0;
+    const windowValue = elements.windowSel.value || '1h';
+    const isDaily = windowValue.endsWith('d');
+
+    state.services.forEach(service => {
+      totalCount++;
+      const rawData = data[service.Name] || [];
+      const history = isDaily ? transformAggData(rawData) : transformStreamData(rawData);
+
+      if (history.length > 0) {
+        const latest = history[history.length - 1];
+        if (latest.status === 'UP') {
+          onlineCount++;
+        }
+        if (typeof latest.response_time_ms === 'number') {
+          totalResponseTime += latest.response_time_ms;
+          responseCount++;
+        }
+      }
+    });
+    
+    elements.totalServices.textContent = totalCount;
+    elements.onlineServices.textContent = onlineCount;
+    elements.avgResponse.textContent = responseCount > 0 
+      ? Math.round(totalResponseTime / responseCount) + 'ms' 
+      : '0ms';
+    elements.lastUpdate.textContent = new Date().toLocaleTimeString();
+    elements.statsBar.style.display = 'flex';
+  }
+
+  async function fetchStatuses(useCache = true) {
+    const win = elements.windowSel.value || '1h';
+    const cacheKey = `status-${win}`;
+    
+    if (useCache && state.cache.has(cacheKey)) {
+      const cached = state.cache.get(cacheKey);
+      if (Date.now() - cached.timestamp < state.cacheTimeout) {
+        render(cached.data);
+        return;
+      }
+    }
+    
+    elements.refreshBtn.disabled = true;
+    elements.refreshText.innerHTML = '<span class="spinner"></span>';
+    
+    try {
+      const resp = await fetch(`/api/status?window=${win}`, {
+        signal: AbortSignal.timeout(10000)
+      });
+      
+      if (!resp.ok) {
+        throw new Error(`Server responded with an error: ${resp.status} ${resp.statusText}`);
+      }
+      
+      const data = await resp.json();
+      
+      state.cache.set(cacheKey, {
+        data: data,
+        timestamp: Date.now()
+      });
+      
+      state.data = data;
+      state.lastFetchTime = Date.now();
+      render(data);
+      
+    } catch (e) {
+      console.error("Failed to load status:", e);
+      
+      let errorMsg = 'Failed to load';
+      if (e.name === 'AbortError') {
+        errorMsg = 'Request timed out. Please check your network connection.';
+      } else if (e.message.includes('Failed to fetch')) {
+        errorMsg = 'Could not connect to the server.';
+      } else {
+        errorMsg = e.message;
+      }
+      
+      elements.grid.innerHTML = `
+        <div class="error">
+          <h3>⚠️ Failed to Load</h3>
+          <p>${errorMsg}</p>
+          <button onclick="fetchStatuses(false)">Retry</button>
+        </div>
+      `;
+    } finally {
+      elements.refreshBtn.disabled = false;
+      elements.refreshText.textContent = 'Refresh';
+    }
+  }
+
+  async function fetchHealth() {
+    try {
+      const resp = await fetch('/api/health');
+      const health = await resp.json();
+      console.log('System health status:', health);
+    } catch (e) {
+      console.error('Failed to fetch health status:', e);
+    }
+  }
+
+  async function init() {
+    try {
+      const resp = await fetch('/api/services', {
+        signal: AbortSignal.timeout(5000)
+      });
+      
+      if (!resp.ok) {
+        throw new Error(`Could not fetch service list: ${resp.status}`);
+      }
+      
+      state.services = await resp.json();
+      
+      await fetchStatuses(false);
+      
+      fetchHealth();
+      
+      if (state.autoRefresh) {
+        startAutoRefresh();
+      }
+      
+    } catch (e) {
+      console.error("Initialization failed:", e);
+      elements.grid.innerHTML = `
+        <div class="error">
+          <h3>⚠️ Initialization Failed</h3>
+          <p>${e.message}</p>
+          <button onclick="location.reload()">Reload</button>
+        </div>
+      `;
+    }
+  }
+
+  function startAutoRefresh() {
+    stopAutoRefresh();
+    state.refreshInterval = setInterval(() => {
+      fetchStatuses(true);
+    }, 60000);
+  }
+
+  function stopAutoRefresh() {
+    if (state.refreshInterval) {
+      clearInterval(state.refreshInterval);
+      state.refreshInterval = null;
+    }
+  }
+
+  function toggleAutoRefresh() {
+    state.autoRefresh = !state.autoRefresh;
+    elements.autoText.textContent = `Auto-refresh: ${state.autoRefresh ? 'ON' : 'OFF'}`;
+    
+    if (state.autoRefresh) {
+      startAutoRefresh();
+    } else {
+      stopAutoRefresh();
+    }
+  }
+
+  elements.refreshBtn.addEventListener('click', () => fetchStatuses(false));
+  elements.autoBtn.addEventListener('click', toggleAutoRefresh);
+  elements.windowSel.addEventListener('change', () => {
+    state.cache.clear();
+    fetchStatuses(false);
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stopAutoRefresh();
+    } else if (state.autoRefresh) {
+      startAutoRefresh();
+      fetchStatuses(true);
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'r' && !e.ctrlKey && !e.metaKey) {
+      fetchStatuses(false);
+    }
+    if (e.key === 'a' && !e.ctrlKey && !e.metaKey) {
+      toggleAutoRefresh();
+    }
+  });
+
+  init();
+</script>
+</body>
+</html>
