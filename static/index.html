@@ -477,8 +477,16 @@
         }
         
         if (eventsInSlot.length > 0) {
+            const isError = eventsInSlot.some(e => e.status === 'ERROR');
             const isDown = eventsInSlot.some(e => e.status === 'DOWN');
-            const currentStatus = isDown ? 'down' : 'up';
+            
+            let currentStatus = 'up';
+            if (isError) {
+                currentStatus = 'error';
+            } else if (isDown) {
+                currentStatus = 'down';
+            }
+
             const lastEvent = eventsInSlot[eventsInSlot.length - 1];
             const cls = `bar-${currentStatus}`;
             const title = `${new Date(lastEvent.ts).toLocaleString()} | ${lastEvent.status}`;
@@ -515,8 +523,15 @@
       let headerHTML = '';
 
       if (latest) {
-        const statusClass = latest.status === 'UP' ? 'status-up' : 'status-down';
-        const statusText = latest.status === 'UP' ? 'UP' : 'DOWN';
+        let statusClass = 'status-nodata';
+        if (latest.status === 'UP') {
+            statusClass = 'status-up';
+        } else if (latest.status === 'DOWN') {
+            statusClass = 'status-down';
+        } else if (latest.status === 'ERROR') {
+            statusClass = 'status-error';
+        }
+        const statusText = latest.status;
         const respTime = latest.response_time_ms;
         const httpCode = latest.status_code;
         const lastChecked = new Date(latest.created_at).toLocaleString();
