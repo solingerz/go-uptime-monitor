@@ -449,7 +449,7 @@
 
       const hours = parseInt(windowValue.slice(0, -1), 10);
       const windowMillis = hours * 60 * 60 * 1000;
-      const latestTimestamp = history.length > 0 ? new Date(history[history.length - 1].created_at).getTime() : Date.now();
+      const latestTimestamp = Date.now();
       const startTs = latestTimestamp - windowMillis;
       const slotDuration = windowMillis / barCount;
       
@@ -461,18 +461,12 @@
       let lastStatus = 'nodata';
       const lastEventBeforeWindow = hs.filter(h => h.ts < startTs).pop();
       if (lastEventBeforeWindow) {
-          lastStatus = lastEventBeforeWindow.status.toLowerCase();
-      } else if (hs.length > 0) {
-          const firstEvent = hs[0];
-          const firstSlotEnd = startTs + slotDuration;
-          if (firstEvent.ts >= startTs && firstEvent.ts < firstSlotEnd) {
-              if (firstEvent.status === 'ERROR') {
-                  lastStatus = 'error';
-              } else if (firstEvent.status === 'DOWN') {
-                  lastStatus = 'down';
-              } else {
-                  lastStatus = 'up';
-              }
+          if (lastEventBeforeWindow.status === 'ERROR') {
+              lastStatus = 'error';
+          } else if (lastEventBeforeWindow.status === 'DOWN') {
+              lastStatus = 'down';
+          } else {
+              lastStatus = 'up';
           }
       }
 
@@ -505,26 +499,9 @@
             bars.push(`<div class="timeline-bar ${cls}" title="${title}"></div>`);
             lastStatus = currentStatus;
         } else {
-            let displayStatus = lastStatus;
-            let title = '';
-            
-            if (i === 0 && lastStatus === 'nodata' && hs.length > 0) {
-                const firstEvent = hs[0];
-                const firstSlotEnd = startTs + slotDuration;
-                
-                if (firstEvent.ts >= slotEnd) {
-                    displayStatus = 'nodata';
-                    title = 'Waiting for data';
-                } else if (firstEvent.ts >= startTs) {
-                    title = 'No data in this time slot';
-                } else {
-                    title = 'No data';
-                }
-            } else {
-                title = lastStatus !== 'nodata' ? `Continuing status: ${lastStatus.toUpperCase()}` : 'No data';
-            }
-            
-            bars.push(`<div class="timeline-bar bar-${displayStatus}" title="${title}"></div>`);
+            const cls = `bar-${lastStatus}`;
+            const title = lastStatus !== 'nodata' ? `Continuing status: ${lastStatus.toUpperCase()}` : 'No data';
+            bars.push(`<div class="timeline-bar ${cls}" title="${title}"></div>`);
         }
       }
       return bars.join('');
