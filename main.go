@@ -24,9 +24,8 @@ type Config struct {
 	RedisDB        int
 	Port           string
 	WorkerCount    int
-	CheckInterval  time.Duration
-	AggInterval    time.Duration
 	RequestTimeout time.Duration
+	UseHeadFirst   bool
 }
 
 var config Config
@@ -34,8 +33,8 @@ var config Config
 var targetsMutex sync.RWMutex
 
 type Target struct {
-	Name string `json:"Name"`
-	URL  string `json:"URL"`
+	Name string `json:"name"`
+	URL  string `json:"url"`
 }
 
 var ctx = context.Background()
@@ -93,9 +92,8 @@ func loadConfig() {
 	log.Printf("Successfully loaded %d monitoring targets", len(newTargets))
 }
 
-func addRecordToRedis(targetName, status string, statusCode int, responseTimeMs int64) {
+func addRecordToRedis(targetName, status string, statusCode int, responseTimeMs int64, timestamp time.Time) {
 	streamKey := fmt.Sprintf("uptime:raw:%s", targetName)
-	now := time.Now()
 	
 	values := map[string]interface{}{
 		"status":           status,
@@ -109,7 +107,7 @@ func addRecordToRedis(targetName, status string, statusCode int, responseTimeMs 
 		
 		result := rdb.XAdd(ctx, &redis.XAddArgs{
 			Stream: streamKey,
-			ID:     fmt.Sprintf("%d-0", now.UnixMilli()),
+			ID:     fmt.Sprintf("%d-0", timestamp.UnixMilli()),
 			Values: values,
 		})
 		
@@ -134,52 +132,102 @@ func addRecordToRedis(targetName, status string, statusCode int, responseTimeMs 
 	}
 }
 
-func checkTarget(target Target) {
+func tryHeadRequest(target Target) (success bool, statusCode int, duration int64) {
 	start := time.Now()
 	
-	checkMutex.Lock()
-	totalChecks++
-	checkMutex.Unlock()
-
-	req, err := http.NewRequestWithContext(ctx, "GET", target.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, "HEAD", target.URL, nil)
 	if err != nil {
 		duration := time.Since(start).Milliseconds()
-		log.Printf("Request creation failed [%s]: %v", target.Name, err)
-		
-		checkMutex.Lock()
-		failedChecks++
-		checkMutex.Unlock()
-		
-		addRecordToRedis(target.Name, "ERROR", 0, duration)
-		return
+		log.Printf("HEAD request creation failed [%s]: %v", target.Name, err)
+		return false, 0, duration
 	}
 
 	req.Header.Set("User-Agent", "Go-Uptime-Monitor/1.0")
 	
 	resp, err := httpClient.Do(req)
-	duration := time.Since(start).Milliseconds()
+	duration = time.Since(start).Milliseconds()
 
 	if err != nil {
-		log.Printf("Check failed [%s]: %s\n", target.Name, err.Error())
+		log.Printf("HEAD request failed [%s]: %v", target.Name, err)
+		return false, 0, duration
+	}
+	
+	defer resp.Body.Close()
+	
+	log.Printf("HEAD request successful [%s]: duration %dms, HTTP code %d", 
+		target.Name, duration, resp.StatusCode)
+	return true, resp.StatusCode, duration
+}
+
+func tryGetRequest(target Target) (success bool, statusCode int, duration int64) {
+	start := time.Now()
+	
+	req, err := http.NewRequestWithContext(ctx, "GET", target.URL, nil)
+	if err != nil {
+		duration := time.Since(start).Milliseconds()
+		log.Printf("GET request creation failed [%s]: %v", target.Name, err)
+		return false, 0, duration
+	}
+
+	req.Header.Set("User-Agent", "Go-Uptime-Monitor/1.0")
+	
+	resp, err := httpClient.Do(req)
+	duration = time.Since(start).Milliseconds()
+
+	if err != nil {
+		log.Printf("GET request failed [%s]: %v", target.Name, err)
+		return false, 0, duration
+	}
+	
+	defer resp.Body.Close()
+	
+	log.Printf("GET request successful [%s]: duration %dms, HTTP code %d", 
+		target.Name, duration, resp.StatusCode)
+	return true, resp.StatusCode, duration
+}
+
+func checkTarget(target Target, timestamp time.Time) {
+	checkMutex.Lock()
+	totalChecks++
+	checkMutex.Unlock()
+
+	var success bool
+	var statusCode int
+	var duration int64
+	
+	if config.UseHeadFirst {
+		success, statusCode, duration = tryHeadRequest(target)
 		
-		checkMutex.Lock()
-		failedChecks++
-		checkMutex.Unlock()
-		
-		addRecordToRedis(target.Name, "ERROR", 0, duration)
+		if !success {
+			log.Printf("HEAD request failed for [%s], falling back to GET", target.Name)
+			success, statusCode, duration = tryGetRequest(target)
+		}
 	} else {
-		defer resp.Body.Close()
+		success, statusCode, duration = tryGetRequest(target)
+	}
+	
+	if success {
 		status := "UP"
-		if resp.StatusCode >= 500 {
+		if statusCode >= 500 {
 			status = "DOWN"
-			
 			checkMutex.Lock()
 			failedChecks++
 			checkMutex.Unlock()
 		}
-		log.Printf("Check successful [%s]: status %s, duration %dms, HTTP code %d\n", target.Name, status, duration, resp.StatusCode)
-		addRecordToRedis(target.Name, status, resp.StatusCode, duration)
+		log.Printf("Check successful [%s]: status %s, duration %dms, HTTP code %d", 
+			target.Name, status, duration, statusCode)
+		addRecordToRedis(target.Name, status, statusCode, duration, timestamp)
+	} else {
+		checkMutex.Lock()
+		failedChecks++
+		checkMutex.Unlock()
+		addRecordToRedis(target.Name, "ERROR", 0, duration, timestamp)
 	}
+}
+
+func getNextMinute() time.Time {
+	now := time.Now().UTC()
+	return time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute()+1, 0, 0, time.UTC)
 }
 
 func runCheckers() {
@@ -193,12 +241,12 @@ func runCheckers() {
 		go func(id int, jobs <-chan Target) {
 			for {
 				select {
-				case t, ok := <-jobs:
+				case task, ok := <-jobs:
 					if !ok {
 						return
 					}
-					log.Printf("Worker %d: checking %s", id, t.Name)
-					checkTarget(t)
+					log.Printf("Worker %d: checking %s", id, task.Name)
+					checkTarget(task, time.Now().UTC())
 					wg.Done()
 				case <-workerCtx.Done():
 					return
@@ -228,9 +276,13 @@ func runCheckers() {
 		log.Println("Current round of check tasks dispatched and completed.")
 	}
 
+	nextMinute := getNextMinute()
+	log.Printf("Waiting until next minute: %s", nextMinute.Format("2006-01-02 15:04:05"))
+	time.Sleep(time.Until(nextMinute))
+	
 	dispatchJobs()
 
-	ticker := time.NewTicker(config.CheckInterval)
+	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
 	for {
@@ -245,7 +297,7 @@ func runCheckers() {
 
 func runAggregator() {
 	time.Sleep(10 * time.Second)
-	ticker := time.NewTicker(config.AggInterval)
+	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
 	log.Println("Starting initial data aggregation task...")
@@ -283,14 +335,17 @@ func aggregateForTarget(target Target) {
 		return
 	}
 
-	var totalResponseTime, downCount int64 = 0, 0
+	var totalResponseTime, downCount, errorCount int64 = 0, 0, 0
 	checkCount := int64(len(messages))
 
 	for _, msg := range messages {
 		responseTime, _ := strconv.ParseInt(msg.Values["response_time_ms"].(string), 10, 64)
 		totalResponseTime += responseTime
-		if msg.Values["status"].(string) == "DOWN" {
+		status := msg.Values["status"].(string)
+		if status == "DOWN" {
 			downCount++
+		} else if status == "ERROR" {
+			errorCount++
 		}
 	}
 
@@ -316,6 +371,7 @@ func aggregateForTarget(target Target) {
 
 	pipe.HSet(ctx, dayKey, "total_checks", newTotalChecks)
 	pipe.HIncrBy(ctx, dayKey, "down_count", downCount)
+	pipe.HIncrBy(ctx, dayKey, "error_count", errorCount)
 	pipe.HSet(ctx, dayKey, "avg_response_time_ms", newAvgResponseTime)
 	pipe.Expire(ctx, dayKey, 90*24*time.Hour)
 
@@ -384,10 +440,9 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 		Uptime:      time.Since(startTime).String(),
 		Version:     "1.0.0",
 		Config: map[string]string{
-			"check_interval": config.CheckInterval.String(),
-			"agg_interval":   config.AggInterval.String(),
 			"redis_addr":     config.RedisAddr,
 			"port":           config.Port,
+			"use_head_first": fmt.Sprintf("%t", config.UseHeadFirst),
 		},
 	}
 	
@@ -397,6 +452,35 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	json.NewEncoder(w).Encode(health)
+}
+
+func calculateStatus(serviceName string, days int) string {
+	now := time.Now().UTC()
+	var totalChecks, totalDown, totalError int64
+	
+	for i := 0; i < days; i++ {
+		date := now.AddDate(0, 0, -i).Format("2006-01-02")
+		dayKey := fmt.Sprintf("uptime:agg:day:%s:%s", serviceName, date)
+		stats, err := rdb.HGetAll(ctx, dayKey).Result()
+		if err == nil && len(stats) > 0 {
+			checks, _ := strconv.ParseInt(stats["total_checks"], 10, 64)
+			down, _ := strconv.ParseInt(stats["down_count"], 10, 64)
+			error, _ := strconv.ParseInt(stats["error_count"], 10, 64)
+			totalChecks += checks
+			totalDown += down
+			totalError += error
+		}
+	}
+	
+	if totalChecks == 0 {
+		return "NO_DATA"
+	}
+	
+	failureRate := float64(totalDown+totalError) / float64(totalChecks)
+	if failureRate >= 0.2 {
+		return "DOWN"
+	}
+	return "UP"
 }
 
 func metricsHandler(w http.ResponseWriter, r *http.Request) {
@@ -427,7 +511,17 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 		messages, err := rdb.XRevRange(ctx, streamKey, "+", "-").Result()
 		if err == nil && len(messages) > 0 {
 			latest := messages[0]
-			metrics.ServiceStatus[target.Name] = latest.Values["status"].(string)
+			
+			status7d := calculateStatus(target.Name, 7)
+			status30d := calculateStatus(target.Name, 30)
+			
+			if status7d == "UP" && status30d == "UP" {
+				metrics.ServiceStatus[target.Name] = "UP"
+			} else if status7d == "NO_DATA" && status30d == "NO_DATA" {
+				metrics.ServiceStatus[target.Name] = latest.Values["status"].(string)
+			} else {
+				metrics.ServiceStatus[target.Name] = "DOWN"
+			}
 			
 			timestamp, _ := strconv.ParseInt(strings.Split(latest.ID, "-")[0], 10, 64)
 			metrics.LastCheckTime[target.Name] = time.UnixMilli(timestamp).Format(time.RFC3339)
@@ -544,9 +638,8 @@ func initConfig() {
 		RedisDB:        getEnvAsIntOrDefault("REDIS_DB", 0),
 		Port:           getEnvOrDefault("PORT", "8080"),
 		WorkerCount:    getEnvAsIntOrDefault("WORKER_COUNT", 5),
-		CheckInterval:  time.Duration(getEnvAsIntOrDefault("CHECK_INTERVAL_SECONDS", 60)) * time.Second,
-		AggInterval:    time.Duration(getEnvAsIntOrDefault("AGG_INTERVAL_MINUTES", 5)) * time.Minute,
 		RequestTimeout: time.Duration(getEnvAsIntOrDefault("REQUEST_TIMEOUT_SECONDS", 15)) * time.Second,
+		UseHeadFirst:   getEnvAsBoolOrDefault("USE_HEAD_FIRST", true),
 	}
 	
 	httpClient.Timeout = config.RequestTimeout
@@ -564,6 +657,13 @@ func getEnvAsIntOrDefault(key string, defaultValue int) int {
 		if intValue, err := strconv.Atoi(value); err == nil {
 			return intValue
 		}
+	}
+	return defaultValue
+}
+
+func getEnvAsBoolOrDefault(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		return strings.ToLower(value) == "true" || value == "1"
 	}
 	return defaultValue
 }

@@ -520,7 +520,7 @@
     }
 
     state.services.forEach(service => {
-      const name = service.Name;
+      const name = service.name;
       const rawHistory = data[name] || [];
       const isDaily = windowValue.endsWith('d');
       const history = isDaily ? transformAggData(rawHistory) : transformStreamData(rawHistory);

@@ -128,9 +128,9 @@ Set `UPTIME_TARGETS_JSON` in your `.env` file:
 
 ```env
 UPTIME_TARGETS_JSON='[
-  {"Name":"Google","URL":"https://google.com"},
-  {"Name":"GitHub","URL":"https://github.com"},
-  {"Name":"Stack Overflow","URL":"https://stackoverflow.com"}
+  {"name":"Google","url":"https://google.com"},
+  {"name":"GitHub","url":"https://github.com"},
+  {"name":"Stack Overflow","url":"https://stackoverflow.com"}
 ]'
 ```
 
@@ -144,12 +144,12 @@ Create `config.json` in the project root:
 ```json
 [
   {
-    "Name": "Google",
-    "URL": "https://www.google.com"
+    "name": "Google",
+    "url": "https://www.google.com"
   },
   {
-    "Name": "GitHub", 
-    "URL": "https://github.com"
+    "name": "GitHub", 
+    "url": "https://github.com"
   }
 ]
 ```
@@ -191,16 +191,6 @@ Create `config.json` in the project root:
 <td><code>WORKER_COUNT</code></td>
 <td><code>5</code></td>
 <td>Number of worker goroutines for concurrent checks</td>
-</tr>
-<tr>
-<td><code>CHECK_INTERVAL_SECONDS</code></td>
-<td><code>60</code></td>
-<td>Interval in seconds for each health check round</td>
-</tr>
-<tr>
-<td><code>AGG_INTERVAL_MINUTES</code></td>
-<td><code>5</code></td>
-<td>Interval in minutes for the data aggregation task</td>
 </tr>
 <tr>
 <td><code>REQUEST_TIMEOUT_SECONDS</code></td>
