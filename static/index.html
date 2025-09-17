@@ -593,7 +593,7 @@
 
     state.services.forEach(service => {
       totalCount++;
-      const rawData = data[service.Name] || [];
+      const rawData = data[service.name] || [];
       const history = isDaily ? transformAggData(rawData) : transformStreamData(rawData);
 
       if (history.length > 0) {
