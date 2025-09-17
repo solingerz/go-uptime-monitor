@@ -457,25 +457,13 @@
       const hs = history.map(h => ({...h, ts: new Date(h.created_at).getTime()})).sort((a, b) => a.ts - b.ts);
       
       const bars = [];
-      let eventPtr = 0;
-
-      let lastStatus = 'nodata';
-      const lastEventBeforeWindow = hs.filter(h => h.ts < startTs).pop();
-      if (lastEventBeforeWindow) {
-          if (lastEventBeforeWindow.status === 'ERROR') {
-              lastStatus = 'error';
-          } else if (lastEventBeforeWindow.status === 'DOWN') {
-              lastStatus = 'down';
-          } else {
-              lastStatus = 'up';
-          }
-      }
 
       for (let i = 0; i < barCount; i++) {
         const slotStart = startTs + i * slotDuration;
         const slotEnd = slotStart + slotDuration;
         
         let eventsInSlot = [];
+        let eventPtr = 0;
         while (eventPtr < hs.length && hs[eventPtr].ts < slotEnd) {
             if (hs[eventPtr].ts >= slotStart) {
                 eventsInSlot.push(hs[eventPtr]);
@@ -498,11 +486,8 @@
             const cls = `bar-${currentStatus}`;
             const title = `${new Date(lastEvent.ts).toLocaleString()} | ${lastEvent.status}`;
             bars.push(`<div class="timeline-bar ${cls}" title="${title}"></div>`);
-            lastStatus = currentStatus;
         } else {
-            const cls = `bar-${lastStatus}`;
-            const title = lastStatus !== 'nodata' ? `Continuing status: ${lastStatus.toUpperCase()}` : 'No data';
-            bars.push(`<div class="timeline-bar ${cls}" title="${title}"></div>`);
+            bars.push(`<div class="timeline-bar bar-nodata" title="No data"></div>`);
         }
       }
       return bars.join('');
