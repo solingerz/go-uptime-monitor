@@ -407,8 +407,20 @@
     for (const date in aggData) {
       const stats = aggData[date];
       if (stats && typeof stats === 'object') {
+        const totalChecks = parseInt(stats.total_checks || 0, 10);
+        const downCount = parseInt(stats.down_count || 0, 10);
+        const errorCount = parseInt(stats.error_count || 0, 10);
+        
+        let status = 'UP';
+        if (totalChecks > 0) {
+          const failureRate = (downCount + errorCount) / totalChecks;
+          if (failureRate >= 0.2) {
+            status = 'DOWN';
+          }
+        }
+        
         history.push({
-          status: parseInt(stats.down_count || 0, 10) > 0 ? 'DOWN' : 'UP',
+          status: status,
           status_code: null,
           response_time_ms: parseInt(stats.avg_response_time_ms || 0, 10),
           created_at: new Date(date).toISOString(),
