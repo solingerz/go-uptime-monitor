@@ -462,11 +462,17 @@
 
       const hours = parseInt(windowValue.slice(0, -1), 10);
       const windowMillis = hours * 60 * 60 * 1000;
-      const latestTimestamp = Date.now();
-      const startTs = latestTimestamp - windowMillis;
-      const slotDuration = windowMillis / barCount;
       
       const hs = history.map(h => ({...h, ts: new Date(h.created_at).getTime()})).sort((a, b) => a.ts - b.ts);
+      
+      let latestTimestamp = Date.now();
+      if (hs.length > 0) {
+          latestTimestamp = hs[hs.length - 1].ts;
+      }
+      
+      const endTs = latestTimestamp;
+      const startTs = endTs - windowMillis;
+      const slotDuration = windowMillis / barCount;
       
       const bars = [];
 

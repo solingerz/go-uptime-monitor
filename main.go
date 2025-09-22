@@ -592,7 +592,7 @@ func getStatusForService(serviceName, window string) (interface{}, error) {
 		if hours == 0 {
 			hours = 1
 		}
-		now := time.Now()
+		now := time.Now().UTC()
 		start := now.Add(-time.Duration(hours) * time.Hour)
 		streamKey := fmt.Sprintf("uptime:raw:%s", serviceName)
 		startMs := start.UnixMilli()
